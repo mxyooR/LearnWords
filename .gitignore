@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyQt
+*.ui
+
+# Data files
+words_data.json
+*.json
+
+# Build outputs
+output/
+*.build/
+*.dist/
+*.onefile-build/
+*.exe
+
+# Icons
+icon.ico
+*.png
+
+# Test files
+test.py
+add_examples.py
+create_icon.py
+example.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
