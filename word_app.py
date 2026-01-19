@@ -170,12 +170,19 @@ class WordManager:
         # 2. 复习中的单词：全部加入
         self.today_tasks.extend(reviewing)
         
-        # 3. 已掌握的单词：每天固定抽取5个（使用日期作为随机种子）
+        # 3. 已掌握的单词：优先选择复习次数少的，每天固定5个
         if mastered:
-            # 使用今天的日期作为随机种子，确保同一天抽取的单词相同
+            # 按复习次数排序，复习次数少的优先
+            mastered_sorted = sorted(mastered, key=lambda w: (self.words[w]["review_count"], w))
+            
+            # 使用日期作为种子，对排序后的列表进行稳定的选择
+            # 这样既保证了优先选择复习次数少的，又保证了每天固定
             random.seed(today)
-            sample_count = min(5, len(mastered))
-            sampled_mastered = random.sample(mastered, sample_count)
+            # 取前10个复习次数最少的，然后从中随机抽5个
+            candidate_count = min(10, len(mastered_sorted))
+            candidates = mastered_sorted[:candidate_count]
+            sample_count = min(5, len(candidates))
+            sampled_mastered = random.sample(candidates, sample_count)
             random.seed()  # 恢复随机种子
             
             self.today_tasks.extend(sampled_mastered)
@@ -360,11 +367,10 @@ class WordManager:
         return True, meaning
 
     def import_words_only(self, text):
-        """只导入单词 - 高鲁棒性提取"""
+        """只导入单词和词组 - 高鲁棒性提取"""
         import re
         words = set()
         text = text.replace('\r\n', '\n').replace('\r', '\n')
-        separators = r'[,;，；\t\s、/|]+'
         skip_words = {'单词', 'word', 'words', '词汇', '英语', 'english', 'vocabulary', 
                       '详细含义', '含义', '意思', 'meaning', 'definition'}
         
@@ -372,21 +378,37 @@ class WordManager:
             line = line.strip()
             if not line:
                 continue
-            parts = re.split(separators, line)
+            
+            # 先尝试按逗号、分号等分隔
+            parts = re.split(r'[,;，；\t、/|]+', line)
             for part in parts:
                 part = part.strip()
                 if not part:
                     continue
+                
+                # 检查是否是词组（包含空格的英文）
+                # 匹配：next of kin, take care of, etc.
+                phrase_match = re.match(r'^[A-Za-z]+(?:\s+[A-Za-z]+)+$', part)
+                if phrase_match:
+                    phrase = part
+                    phrase_lower = phrase.lower()
+                    exists = any(w.lower() == phrase_lower for w in self.words.keys())
+                    if (len(phrase) >= 3 and 
+                        phrase.lower() not in skip_words and
+                        not exists):
+                        words.add(phrase)
+                    continue
+                
+                # 否则按单词提取
                 matches = re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", part)
                 for word in matches:
                     word = word.strip("'-")
                     word_lower = word.lower()
-                    # 检查是否已存在（不区分大小写）
                     exists = any(w.lower() == word_lower for w in self.words.keys())
                     if (len(word) >= 2 and 
                         not word.isdigit() and 
                         word.lower() not in skip_words and
-                        not exists):  # 去重：不导入已存在的单词
+                        not exists):
                         words.add(word)
         return list(words)
 
