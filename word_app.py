@@ -249,24 +249,22 @@ class WordManager:
                         en = sent.get("sentence", "")
                         if en:
                             examples.append({"en": en, "cn": ""})
-                
-                if meaning:
-                    return meaning, examples
         except:
             pass
         
-        # 2. 备用：有道suggest接口
-        try:
-            url = f"https://dict.youdao.com/suggest?num=1&doctype=json&q={urllib.parse.quote(word)}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                if data.get("result", {}).get("code") == 200:
-                    entries = data.get("data", {}).get("entries", [])
-                    if entries and entries[0].get("explain"):
-                        meaning = entries[0]["explain"]
-        except:
-            pass
+        # 2. 备用：有道suggest接口（只获取释义）
+        if not meaning:
+            try:
+                url = f"https://dict.youdao.com/suggest?num=1&doctype=json&q={urllib.parse.quote(word)}"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    if data.get("result", {}).get("code") == 200:
+                        entries = data.get("data", {}).get("entries", [])
+                        if entries and entries[0].get("explain"):
+                            meaning = entries[0]["explain"]
+            except:
+                pass
         
         # 3. 备用：Free Dictionary API（英文释义和例句）
         if not examples:
