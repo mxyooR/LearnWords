@@ -170,10 +170,14 @@ class WordManager:
         # 2. 复习中的单词：全部加入
         self.today_tasks.extend(reviewing)
         
-        # 3. 已掌握的单词：随机抽5个
+        # 3. 已掌握的单词：每天固定抽取5个（使用日期作为随机种子）
         if mastered:
+            # 使用今天的日期作为随机种子，确保同一天抽取的单词相同
+            random.seed(today)
             sample_count = min(5, len(mastered))
             sampled_mastered = random.sample(mastered, sample_count)
+            random.seed()  # 恢复随机种子
+            
             self.today_tasks.extend(sampled_mastered)
             # 检查这些已掌握的单词今天是否已复习
             for word in sampled_mastered:
