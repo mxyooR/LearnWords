@@ -170,18 +170,31 @@ class WordManager:
         # 2. 复习中的单词：全部加入
         self.today_tasks.extend(reviewing)
         
-        # 3. 已掌握的单词：优先选择复习次数少的，每天固定5个
+        # 3. 已掌握的单词：动态调整复习数量
         if mastered:
             # 按复习次数排序，复习次数少的优先
             mastered_sorted = sorted(mastered, key=lambda w: (self.words[w]["review_count"], w))
+            mastered_count = len(mastered_sorted)
             
-            # 使用日期作为种子，对排序后的列表进行稳定的选择
-            # 这样既保证了优先选择复习次数少的，又保证了每天固定
+            # 动态计算抽取数量
+            if mastered_count < 100:
+                # 词库少时：固定10-15个
+                sample_count = min(random.randint(10, 15), mastered_count)
+            elif mastered_count < 500:
+                # 词库中等：10%-15%
+                sample_count = int(mastered_count * random.uniform(0.10, 0.15))
+            else:
+                # 词库大时：8%-12%，避免任务过重
+                sample_count = int(mastered_count * random.uniform(0.08, 0.12))
+            
+            # 使用日期作为种子，保证每天固定
             random.seed(today)
-            # 取前10个复习次数最少的，然后从中随机抽5个
-            candidate_count = min(10, len(mastered_sorted))
+            sample_count = min(sample_count, mastered_count)  # 不超过总数
+            
+            # 从复习次数少的单词中优先选择
+            # 取前30%作为候选池，然后随机抽取
+            candidate_count = max(sample_count * 2, min(30, mastered_count))
             candidates = mastered_sorted[:candidate_count]
-            sample_count = min(5, len(candidates))
             sampled_mastered = random.sample(candidates, sample_count)
             random.seed()  # 恢复随机种子
             
