@@ -176,6 +176,9 @@ class WordManager:
             mastered_sorted = sorted(mastered, key=lambda w: (self.words[w]["review_count"], w))
             mastered_count = len(mastered_sorted)
             
+            # 使用日期作为种子，保证每天固定
+            random.seed(today)
+            
             # 动态计算抽取数量
             if mastered_count < 100:
                 # 词库少时：固定10-15个
@@ -187,8 +190,6 @@ class WordManager:
                 # 词库大时：8%-12%，避免任务过重
                 sample_count = int(mastered_count * random.uniform(0.08, 0.12))
             
-            # 使用日期作为种子，保证每天固定
-            random.seed(today)
             sample_count = min(sample_count, mastered_count)  # 不超过总数
             
             # 从复习次数少的单词中优先选择
@@ -758,7 +759,19 @@ class MainWindow(QMainWindow):
         
         import random
         self.current_word = random.choice(words_to_review)
-        self.word_label.setText(self.current_word)
+        
+        # 获取复习次数
+        review_count = self.manager.words[self.current_word]["review_count"]
+        
+        # 使用HTML格式显示单词和复习次数
+        word_html = f'''
+        <div style="position: relative; text-align: center;">
+            <div style="font-size: 28pt; font-weight: bold;">{self.current_word}</div>
+            <div style="font-size: 10pt; color: #888; margin-top: 5px;">(已复习 {review_count} 次)</div>
+        </div>
+        '''
+        self.word_label.setText(word_html)
+        
         self.answer_input.clear()
         self.result_label.clear()
         self.example_label.clear()
