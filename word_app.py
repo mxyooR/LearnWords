@@ -514,22 +514,28 @@ class MainWindow(QMainWindow):
         self.result_label.setStyleSheet("padding: 10px; background: #f5f5f5; border-radius: 5px;")
         layout.addWidget(self.result_label)
         
-        # 例句显示
+        # 例句显示和编辑
         example_group = QGroupBox("例句")
         example_group.setFont(QFont("Microsoft YaHei", 11))
         example_layout = QVBoxLayout(example_group)
-        self.example_label = QLabel()
-        self.example_label.setFont(QFont("Microsoft YaHei", 10))
-        self.example_label.setWordWrap(True)
-        self.example_label.setStyleSheet("padding: 10px; background: #fff; border-radius: 5px;")
         
-        # 添加滚动区域
-        scroll_area = QScrollArea()
-        scroll_area.setWidget(self.example_label)
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setMinimumHeight(120)
-        scroll_area.setMaximumHeight(200)
-        example_layout.addWidget(scroll_area)
+        # 使用 QTextEdit 替代 QLabel，支持编辑和复制
+        self.example_text = QTextEdit()
+        self.example_text.setFont(QFont("Microsoft YaHei", 10))
+        self.example_text.setMinimumHeight(120)
+        self.example_text.setMaximumHeight(200)
+        self.example_text.setStyleSheet("padding: 10px; background: #fff; border-radius: 5px;")
+        self.example_text.setReadOnly(False)  # 允许编辑
+        example_layout.addWidget(self.example_text)
+        
+        # 保存例句按钮
+        save_example_btn = QPushButton("保存例句修改")
+        save_example_btn.setFont(QFont("Microsoft YaHei", 10))
+        save_example_btn.setMinimumHeight(32)
+        save_example_btn.setStyleSheet("background: #28a745; color: white; border: none; border-radius: 4px;")
+        save_example_btn.clicked.connect(self.save_example_changes)
+        example_layout.addWidget(save_example_btn)
+        
         layout.addWidget(example_group)
         
         # 按钮
@@ -721,6 +727,7 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setDefaultSectionSize(60)
         self.table.setWordWrap(True)
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked)  # 双击编辑
+        self.table.setSortingEnabled(True)  # 启用排序
         self.table.itemChanged.connect(self.on_table_item_changed)  # 监听修改
         layout.addWidget(self.table)
         
@@ -752,7 +759,7 @@ class MainWindow(QMainWindow):
         if not words_to_review:
             self.word_label.setText("今日任务已完成！🎉")
             self.current_word = None
-            self.example_label.clear()
+            self.example_text.clear()
             self.know_btn.setVisible(False)
             self.dont_know_btn.setVisible(False)
             return
@@ -774,7 +781,7 @@ class MainWindow(QMainWindow):
         
         self.answer_input.clear()
         self.result_label.clear()
-        self.example_label.clear()
+        self.example_text.clear()
         self.know_btn.setVisible(False)
         self.dont_know_btn.setVisible(False)
         self.answer_input.setFocus()
@@ -878,16 +885,47 @@ class MainWindow(QMainWindow):
         examples = word_data.get("examples", [])
         
         if not examples:
-            self.example_label.setText("暂无例句")
+            self.example_text.setPlainText("暂无例句")
             return
         
         example_text = ""
-        for i, ex in enumerate(examples[:3], 1):  # 最多显示3个例句
+        for i, ex in enumerate(examples, 1):  # 显示所有例句
             en = ex.get("en", "")
             if en:
                 example_text += f"{i}. {en}\n\n"
         
-        self.example_label.setText(example_text.strip() if example_text else "暂无例句")
+        self.example_text.setPlainText(example_text.strip() if example_text else "暂无例句")
+    
+    def save_example_changes(self):
+        """保存例句修改"""
+        if not self.current_word:
+            QMessageBox.warning(self, "提示", "当前没有正在复习的单词")
+            return
+        
+        # 获取编辑后的文本
+        text = self.example_text.toPlainText().strip()
+        
+        if not text or text == "暂无例句":
+            # 清空例句
+            self.manager.words[self.current_word]["examples"] = []
+        else:
+            # 解析例句（每行一个，忽略序号）
+            examples = []
+            for line in text.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                # 去掉开头的序号（如 "1. "）
+                import re
+                line = re.sub(r'^\d+\.\s*', '', line)
+                if line:
+                    examples.append({"en": line, "cn": ""})
+            
+            self.manager.words[self.current_word]["examples"] = examples
+        
+        self.manager.save_data()
+        QMessageBox.information(self, "保存成功", f"已保存 {self.current_word} 的例句修改")
+        self.update_table()
     
     def import_from_text(self):
         text = self.import_text.toPlainText()
@@ -997,11 +1035,13 @@ class MainWindow(QMainWindow):
         else:
             words = self.manager.get_mastered_words()
         
-        # 暂时断开信号，避免触发itemChanged
+        # 暂时断开信号和排序，避免触发itemChanged
         try:
             self.table.itemChanged.disconnect(self.on_table_item_changed)
         except:
             pass  # 如果信号未连接，忽略错误
+        
+        self.table.setSortingEnabled(False)  # 填充数据时禁用排序
         
         self.table.setRowCount(len(words))
         for row, (word, data) in enumerate(words.items()):
@@ -1022,7 +1062,9 @@ class MainWindow(QMainWindow):
                 example_item = QTableWidgetItem("")
             self.table.setItem(row, 2, example_item)
             
-            count_item = QTableWidgetItem(str(data["review_count"]))
+            # 复习次数 - 使用数字类型以便正确排序
+            count_item = QTableWidgetItem()
+            count_item.setData(Qt.DisplayRole, data["review_count"])  # 使用数字
             count_item.setTextAlignment(Qt.AlignCenter)
             count_item.setFlags(count_item.flags() & ~Qt.ItemIsEditable)  # 复习次数不可编辑
             self.table.setItem(row, 3, count_item)
@@ -1031,6 +1073,8 @@ class MainWindow(QMainWindow):
             time_item.setTextAlignment(Qt.AlignCenter)
             time_item.setFlags(time_item.flags() & ~Qt.ItemIsEditable)  # 时间不可编辑
             self.table.setItem(row, 4, time_item)
+        
+        self.table.setSortingEnabled(True)  # 填充完成后启用排序
         
         # 重新连接信号
         try:
