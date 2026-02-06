@@ -1,5 +1,5 @@
 """
-背单词程序 - PyQt5 + JSON存储
+背单词程序 - PyQt5 + JSON存储 + MySQL自动备份
 功能：导入/导出单词、复习测试、统计查看、联网查词
 """
 import sys
@@ -14,10 +14,116 @@ from PyQt5.QtWidgets import (
     QTabWidget, QFileDialog, QMessageBox, QComboBox, QTextEdit,
     QHeaderView, QGroupBox, QProgressDialog, QAbstractItemView, QScrollArea
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QUrl
 from PyQt5.QtGui import QFont
+from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 
 DATA_FILE = "words_data.json"
+BACKUP_FLAG_FILE = "last_backup.txt"
+
+# MySQL配置（根据你的实际情况修改）
+MYSQL_CONFIG = {
+    "host": "localhost",
+    "user": "root",
+    "password": "123456",
+    "database": "words_backup",
+    "charset": "utf8mb4"
+}
+
+
+def backup_to_mysql(words_data):
+    """备份数据到MySQL"""
+    try:
+        import pymysql
+        
+        # 先连接MySQL（不指定数据库），创建数据库
+        try:
+            conn = pymysql.connect(
+                host=MYSQL_CONFIG["host"],
+                user=MYSQL_CONFIG["user"],
+                password=MYSQL_CONFIG["password"],
+                charset=MYSQL_CONFIG["charset"]
+            )
+            cursor = conn.cursor()
+            cursor.execute("CREATE DATABASE IF NOT EXISTS words_backup CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"[备份] 创建数据库时出错: {e}")
+        
+        # 连接到指定数据库
+        conn = pymysql.connect(**MYSQL_CONFIG)
+        cursor = conn.cursor()
+        
+        # 创建表（如果不存在）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS words_backup (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                backup_date DATE NOT NULL,
+                word VARCHAR(200) NOT NULL,
+                meaning TEXT,
+                examples JSON,
+                review_count INT DEFAULT 0,
+                last_review VARCHAR(50),
+                last_review_date VARCHAR(20),
+                today_reviewed BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_backup_date (backup_date),
+                INDEX idx_word (word)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
+        
+        # 获取今天日期
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        # 删除今天的旧备份（如果有）
+        cursor.execute("DELETE FROM words_backup WHERE backup_date = %s", (today,))
+        
+        # 插入新备份
+        for word, data in words_data.items():
+            cursor.execute("""
+                INSERT INTO words_backup 
+                (backup_date, word, meaning, examples, review_count, last_review, last_review_date, today_reviewed)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                today,
+                word,
+                data.get("meaning", ""),
+                json.dumps(data.get("examples", []), ensure_ascii=False),
+                data.get("review_count", 0),
+                data.get("last_review", ""),
+                data.get("last_review_date", ""),
+                data.get("today_reviewed", False)
+            ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        # 记录备份时间
+        with open(BACKUP_FLAG_FILE, 'w') as f:
+            f.write(today)
+        
+        return True, f"成功备份 {len(words_data)} 个单词到MySQL"
+    
+    except ImportError:
+        return False, "未安装pymysql库，跳过MySQL备份"
+    except Exception as e:
+        return False, f"MySQL备份失败: {str(e)}"
+
+
+def should_backup_today():
+    """检查今天是否需要备份"""
+    if not os.path.exists(BACKUP_FLAG_FILE):
+        return True
+    
+    try:
+        with open(BACKUP_FLAG_FILE, 'r') as f:
+            last_backup = f.read().strip()
+        today = datetime.now().strftime("%Y-%m-%d")
+        return last_backup != today
+    except:
+        return True
 
 
 class FetchWorker(QThread):
@@ -433,12 +539,32 @@ class MainWindow(QMainWindow):
         self.manager = WordManager()
         self.current_word = None
         self.fetch_thread = None
+        self.media_player = QMediaPlayer()  # 音频播放器
         self.init_ui()
+        
+        # 检查是否需要备份到MySQL
+        self.check_and_backup()
+    
+    def check_and_backup(self):
+        """检查并执行每日备份"""
+        if should_backup_today() and self.manager.words:
+            success, message = backup_to_mysql(self.manager.words)
+            # 写入日志文件
+            log_file = "backup_log.txt"
+            with open(log_file, 'a', encoding='utf-8') as f:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"[{timestamp}] {message}\n")
+            
+            # 弹窗提示
+            if success:
+                QMessageBox.information(self, "备份成功", message)
+            else:
+                QMessageBox.warning(self, "备份失败", message)
     
     def init_ui(self):
         self.setWindowTitle("背单词助手")
-        self.resize(1200, 800)
-        self.setMinimumSize(1000, 700)
+        self.resize(1200, 900)
+        self.setMinimumSize(1000, 800)
         
         # 设置全局字体
         font = QFont("Microsoft YaHei", 11)
@@ -476,11 +602,45 @@ class MainWindow(QMainWindow):
         word_group.setFont(QFont("Microsoft YaHei", 11))
         word_layout = QVBoxLayout(word_group)
         word_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # 单词和发音按钮的水平布局
+        word_container = QHBoxLayout()
+        word_container.addStretch()
+        
         self.word_label = QLabel("点击「开始复习」开始")
         self.word_label.setFont(QFont("Microsoft YaHei", 28, QFont.Bold))
         self.word_label.setAlignment(Qt.AlignCenter)
         self.word_label.setMinimumHeight(100)
-        word_layout.addWidget(self.word_label)
+        word_container.addWidget(self.word_label)
+        
+        # 发音按钮（苹果风格）
+        self.sound_btn = QPushButton("🔊")
+        self.sound_btn.setFont(QFont("Segoe UI Emoji", 18))
+        self.sound_btn.setFixedSize(44, 44)
+        self.sound_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(0, 122, 255, 0.1);
+                border: 1px solid rgba(0, 122, 255, 0.3);
+                border-radius: 22px;
+                color: #007AFF;
+            }
+            QPushButton:hover {
+                background-color: rgba(0, 122, 255, 0.2);
+                border: 1px solid rgba(0, 122, 255, 0.5);
+            }
+            QPushButton:pressed {
+                background-color: rgba(0, 122, 255, 0.3);
+                border: 1px solid rgba(0, 122, 255, 0.7);
+            }
+        """)
+        self.sound_btn.setCursor(Qt.PointingHandCursor)
+        self.sound_btn.setToolTip("播放发音")
+        self.sound_btn.clicked.connect(self.play_pronunciation)
+        self.sound_btn.setVisible(False)
+        word_container.addWidget(self.sound_btn)
+        
+        word_container.addStretch()
+        word_layout.addLayout(word_container)
         layout.addWidget(word_group)
         
         # 开始复习按钮
@@ -762,6 +922,7 @@ class MainWindow(QMainWindow):
             self.example_text.clear()
             self.know_btn.setVisible(False)
             self.dont_know_btn.setVisible(False)
+            self.sound_btn.setVisible(False)  # 隐藏发音按钮
             return
         
         import random
@@ -778,6 +939,7 @@ class MainWindow(QMainWindow):
         </div>
         '''
         self.word_label.setText(word_html)
+        self.sound_btn.setVisible(True)  # 显示发音按钮
         
         self.answer_input.clear()
         self.result_label.clear()
@@ -785,6 +947,17 @@ class MainWindow(QMainWindow):
         self.know_btn.setVisible(False)
         self.dont_know_btn.setVisible(False)
         self.answer_input.setFocus()
+    
+    def play_pronunciation(self):
+        """播放单词发音"""
+        if not self.current_word:
+            return
+        
+        # 使用有道词典语音API
+        # type=1: 美式发音, type=2: 英式发音
+        url = f"https://dict.youdao.com/dictvoice?audio={urllib.parse.quote(self.current_word)}&type=1"
+        self.media_player.setMedia(QMediaContent(QUrl(url)))
+        self.media_player.play()
     
     def check_answer(self):
         if not self.current_word:
