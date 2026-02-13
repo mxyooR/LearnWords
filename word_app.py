@@ -310,36 +310,46 @@ class WordManager:
         # 2. 复习中的单词：全部加入
         self.today_tasks.extend(reviewing)
         
-        # 3. 已掌握的单词：优先加入到期的，不足10个则随机补充
-        if mastered_due:
-            # 按复习次数排序，复习次数少的优先
-            mastered_due_sorted = sorted(mastered_due, key=lambda w: (self.words[w]["review_count"], w))
-            self.today_tasks.extend(mastered_due_sorted)
+        # 检查当前任务数量，如果已经超过60个，不再添加已掌握的单词
+        current_count = len(self.today_tasks)
+        max_total = 60  # 每天最多60个
         
-        # 如果已掌握的到期单词不足10个，随机补充
-        if len(mastered_due) < 10 and mastered:
-            # 从未到期的已掌握单词中随机选择
-            not_due = [w for w in mastered if w not in mastered_due]
-            if not_due:
-                # 使用日期作为种子，保证每天固定
-                random.seed(today.strftime("%Y-%m-%d"))
-                # 按复习次数排序，优先选择复习次数少的
-                not_due_sorted = sorted(not_due, key=lambda w: (self.words[w]["review_count"], w))
-                # 从前30%中随机选择
-                candidate_count = max(10, len(not_due_sorted) // 3)
-                candidates = not_due_sorted[:candidate_count]
-                
-                need_count = 10 - len(mastered_due)
-                sample_count = min(need_count, len(candidates))
-                sampled = random.sample(candidates, sample_count)
-                self.today_tasks.extend(sampled)
-                
-                # 检查这些单词今天是否已复习
-                for word in sampled:
-                    if self.words[word].get("last_review_date", "") == today.strftime("%Y-%m-%d"):
-                        self.today_completed.add(word)
-                
-                random.seed()  # 恢复随机种子
+        if current_count < max_total:
+            remaining_slots = max_total - current_count
+            
+            # 3. 已掌握的单词：优先加入到期的，不足10个则随机补充
+            if mastered_due:
+                # 按复习次数排序，复习次数少的优先
+                mastered_due_sorted = sorted(mastered_due, key=lambda w: (self.words[w]["review_count"], w))
+                # 限制数量不超过剩余槽位
+                add_count = min(len(mastered_due_sorted), remaining_slots)
+                self.today_tasks.extend(mastered_due_sorted[:add_count])
+            
+            # 如果已掌握的到期单词不足10个，随机补充
+            added_mastered = min(len(mastered_due), remaining_slots)
+            if added_mastered < 10 and added_mastered < remaining_slots and mastered:
+                # 从未到期的已掌握单词中随机选择
+                not_due = [w for w in mastered if w not in mastered_due]
+                if not_due:
+                    # 使用日期作为种子，保证每天固定
+                    random.seed(today.strftime("%Y-%m-%d"))
+                    # 按复习次数排序，优先选择复习次数少的
+                    not_due_sorted = sorted(not_due, key=lambda w: (self.words[w]["review_count"], w))
+                    # 从前30%中随机选择
+                    candidate_count = max(10, len(not_due_sorted) // 3)
+                    candidates = not_due_sorted[:candidate_count]
+                    
+                    need_count = min(10 - added_mastered, remaining_slots - added_mastered)
+                    sample_count = min(need_count, len(candidates))
+                    sampled = random.sample(candidates, sample_count)
+                    self.today_tasks.extend(sampled)
+                    
+                    # 检查这些单词今天是否已复习
+                    for word in sampled:
+                        if self.words[word].get("last_review_date", "") == today.strftime("%Y-%m-%d"):
+                            self.today_completed.add(word)
+                    
+                    random.seed()  # 恢复随机种子
         
         # 打乱顺序
         random.shuffle(self.today_tasks)
