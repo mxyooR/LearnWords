@@ -241,9 +241,11 @@ class WordManager:
         return [w for w in self.today_tasks if w not in self.today_completed]
     
     def init_today_tasks(self):
-        """初始化今日任务 - 根据上次复习时间"""
+        """初始化今日任务 - 基于艾宾浩斯遗忘曲线"""
         import random
-        today = datetime.now().strftime("%Y-%m-%d")
+        from datetime import datetime, timedelta
+        
+        today = datetime.now().date()
         
         self.today_tasks = []
         self.today_completed = set()
@@ -251,24 +253,56 @@ class WordManager:
         unreviewed = []  # 未复习的
         reviewing = []   # 复习中的（1-2次）
         mastered = []    # 已掌握的（>=3次）
+        mastered_due = []  # 已掌握且到期的
+        
+        # 艾宾浩斯复习间隔（天数）
+        ebbinghaus_intervals = {
+            3: 2,   # 第3次复习：2天后
+            4: 4,   # 第4次复习：4天后
+            5: 7,   # 第5次复习：7天后
+            6: 15,  # 第6次复习：15天后
+        }
+        default_interval = 30  # 第7次及以后：30天后
         
         for word, data in self.words.items():
             last_review_date = data.get("last_review_date", "")
             review_count = data.get("review_count", 0)
             
             if review_count == 0:
-                # 未复习的单词
-                if last_review_date == today:
+                # 未复习的单词：全部加入
+                if last_review_date == today.strftime("%Y-%m-%d"):
                     self.today_completed.add(word)
                 unreviewed.append(word)
             elif review_count < 3:
-                # 复习中的单词（1-2次）
-                if last_review_date == today:
+                # 复习中的单词（1-2次）：全部加入
+                if last_review_date == today.strftime("%Y-%m-%d"):
                     self.today_completed.add(word)
                 reviewing.append(word)
             else:
-                # 已掌握的单词（>=3次）
+                # 已掌握的单词（>=3次）：根据艾宾浩斯曲线判断
                 mastered.append(word)
+                
+                # 检查是否到期
+                if last_review_date:
+                    try:
+                        last_date = datetime.strptime(last_review_date, "%Y-%m-%d").date()
+                        days_since_review = (today - last_date).days
+                        
+                        # 获取应该的复习间隔
+                        required_interval = ebbinghaus_intervals.get(review_count, default_interval)
+                        
+                        # 如果距离上次复习已经达到或超过间隔天数，加入到期列表
+                        if days_since_review >= required_interval:
+                            mastered_due.append(word)
+                            # 如果今天已复习过，标记为已完成
+                            if last_review_date == today.strftime("%Y-%m-%d"):
+                                self.today_completed.add(word)
+                    except:
+                        # 如果日期解析失败，加入到期列表
+                        mastered_due.append(word)
+                else:
+                    # 如果没有复习日期，加入到期列表
+                    mastered_due.append(word)
         
         # 1. 未复习的单词：全部加入
         self.today_tasks.extend(unreviewed)
@@ -276,41 +310,38 @@ class WordManager:
         # 2. 复习中的单词：全部加入
         self.today_tasks.extend(reviewing)
         
-        # 3. 已掌握的单词：动态调整复习数量
-        if mastered:
+        # 3. 已掌握的单词：优先加入到期的，不足10个则随机补充
+        if mastered_due:
             # 按复习次数排序，复习次数少的优先
-            mastered_sorted = sorted(mastered, key=lambda w: (self.words[w]["review_count"], w))
-            mastered_count = len(mastered_sorted)
-            
-            # 使用日期作为种子，保证每天固定
-            random.seed(today)
-            
-            # 动态计算抽取数量
-            if mastered_count < 100:
-                # 词库少时：固定10-15个
-                sample_count = min(random.randint(10, 15), mastered_count)
-            elif mastered_count < 500:
-                # 词库中等：10%-15%
-                sample_count = int(mastered_count * random.uniform(0.10, 0.15))
-            else:
-                # 词库大时：8%-12%，避免任务过重
-                sample_count = int(mastered_count * random.uniform(0.08, 0.12))
-            
-            sample_count = min(sample_count, mastered_count)  # 不超过总数
-            
-            # 从复习次数少的单词中优先选择
-            # 取前30%作为候选池，然后随机抽取
-            candidate_count = max(sample_count * 2, min(30, mastered_count))
-            candidates = mastered_sorted[:candidate_count]
-            sampled_mastered = random.sample(candidates, sample_count)
-            random.seed()  # 恢复随机种子
-            
-            self.today_tasks.extend(sampled_mastered)
-            # 检查这些已掌握的单词今天是否已复习
-            for word in sampled_mastered:
-                if self.words[word].get("last_review_date", "") == today:
-                    self.today_completed.add(word)
+            mastered_due_sorted = sorted(mastered_due, key=lambda w: (self.words[w]["review_count"], w))
+            self.today_tasks.extend(mastered_due_sorted)
         
+        # 如果已掌握的到期单词不足10个，随机补充
+        if len(mastered_due) < 10 and mastered:
+            # 从未到期的已掌握单词中随机选择
+            not_due = [w for w in mastered if w not in mastered_due]
+            if not_due:
+                # 使用日期作为种子，保证每天固定
+                random.seed(today.strftime("%Y-%m-%d"))
+                # 按复习次数排序，优先选择复习次数少的
+                not_due_sorted = sorted(not_due, key=lambda w: (self.words[w]["review_count"], w))
+                # 从前30%中随机选择
+                candidate_count = max(10, len(not_due_sorted) // 3)
+                candidates = not_due_sorted[:candidate_count]
+                
+                need_count = 10 - len(mastered_due)
+                sample_count = min(need_count, len(candidates))
+                sampled = random.sample(candidates, sample_count)
+                self.today_tasks.extend(sampled)
+                
+                # 检查这些单词今天是否已复习
+                for word in sampled:
+                    if self.words[word].get("last_review_date", "") == today.strftime("%Y-%m-%d"):
+                        self.today_completed.add(word)
+                
+                random.seed()  # 恢复随机种子
+        
+        # 打乱顺序
         random.shuffle(self.today_tasks)
     
     def get_mastered_words(self):
@@ -610,7 +641,9 @@ class MainWindow(QMainWindow):
         self.word_label = QLabel("点击「开始复习」开始")
         self.word_label.setFont(QFont("Microsoft YaHei", 28, QFont.Bold))
         self.word_label.setAlignment(Qt.AlignCenter)
-        self.word_label.setMinimumHeight(100)
+        self.word_label.setMinimumHeight(120)  # 增加高度以容纳复习次数
+        self.word_label.setWordWrap(True)  # 允许换行
+        self.word_label.setTextFormat(Qt.RichText)  # 支持HTML格式
         word_container.addWidget(self.word_label)
         
         # 发音按钮（苹果风格）
