@@ -246,6 +246,8 @@ class WordManager:
         from datetime import datetime, timedelta
         
         today = datetime.now().date()
+        today_str = today.strftime("%Y-%m-%d")
+        day_rng = random.Random(f"daily-review-{today_str}")
         
         self.today_tasks = []
         self.today_completed = set()
@@ -305,6 +307,9 @@ class WordManager:
                     mastered_due.append(word)
         
         # 1. 未复习的单词：全部加入
+        unreviewed.sort()
+        reviewing.sort(key=lambda w: (self.words[w]["review_count"], w))
+        mastered.sort(key=lambda w: (self.words[w]["review_count"], w))
         self.today_tasks.extend(unreviewed)
         
         # 2. 复习中的单词：全部加入
@@ -332,7 +337,6 @@ class WordManager:
                 not_due = [w for w in mastered if w not in mastered_due]
                 if not_due:
                     # 使用日期作为种子，保证每天固定
-                    random.seed(today.strftime("%Y-%m-%d"))
                     # 按复习次数排序，优先选择复习次数少的
                     not_due_sorted = sorted(not_due, key=lambda w: (self.words[w]["review_count"], w))
                     # 从前30%中随机选择
@@ -341,7 +345,7 @@ class WordManager:
                     
                     need_count = min(10 - added_mastered, remaining_slots - added_mastered)
                     sample_count = min(need_count, len(candidates))
-                    sampled = random.sample(candidates, sample_count)
+                    sampled = day_rng.sample(candidates, sample_count)
                     self.today_tasks.extend(sampled)
                     
                     # 检查这些单词今天是否已复习
@@ -349,10 +353,9 @@ class WordManager:
                         if self.words[word].get("last_review_date", "") == today.strftime("%Y-%m-%d"):
                             self.today_completed.add(word)
                     
-                    random.seed()  # 恢复随机种子
         
         # 打乱顺序
-        random.shuffle(self.today_tasks)
+        day_rng.shuffle(self.today_tasks)
     
     def get_mastered_words(self):
         return {w: d for w, d in self.words.items() if d["review_count"] >= 3}
@@ -968,8 +971,7 @@ class MainWindow(QMainWindow):
             self.sound_btn.setVisible(False)  # 隐藏发音按钮
             return
         
-        import random
-        self.current_word = random.choice(words_to_review)
+        self.current_word = words_to_review[0]
         
         # 获取复习次数
         review_count = self.manager.words[self.current_word]["review_count"]
